@@ -3828,4 +3828,14 @@ public class Config extends ConfigBase {
     @ConfField(comment = "Enable case-insensitive catalog/database/table names. " +
             "Only configurable during cluster initialization, immutable once set.")
     public static boolean enable_table_name_case_insensitive = false;
+
+
+    // ... 现有配置项 ...
+
+    @ConfField(mutable = true, masterOnly = false)
+    @ConfComment("Enable partial available mode for single replica deployment")
+    @ConfDefault("false")
+    public static boolean partial_available_enabled;
+
+    // ... 现有配置项 ...
 }
