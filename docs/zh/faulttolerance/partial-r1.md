@@ -322,3 +322,5 @@ CREATE TABLE IF NOT EXISTS tablet_failure (
 [2] StarRocks 官方文档, "数据分布", https://docs.starrocks.io/zh/docs/table_design/data_distribution/
 
 [3] StarRocks 官方文档, "分区最佳实践", https://docs.starrocks.io/zh/docs/best_practices/partitioning/
+
+[4] StarAvail 一个高性能代理服务，专为 StarRocks 单副本部署提供部分可用性保障，并优化数据摄入管道, https://github.com/turtacn/staravail
