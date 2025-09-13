@@ -1,16 +1,15 @@
 package com.starrocks.partial.merge;
 
-import com.starrocks.transaction.VersionInfo;
 import java.util.ArrayList;
 import java.util.List;
 
 public class MergeResult {
     private MergeStatus status;
-    private List<VersionInfo> mergedVersions = new ArrayList<>();
     private String error;
+    private List<Long> mergedVersions = new ArrayList<>();
 
-    public void addMergedVersion(VersionInfo version) {
-        this.mergedVersions.add(version);
+    public void addMergedVersion(Long version) {
+        mergedVersions.add(version);
     }
 
     public MergeStatus getStatus() {
@@ -21,19 +20,19 @@ public class MergeResult {
         this.status = status;
     }
 
-    public List<VersionInfo> getMergedVersions() {
-        return mergedVersions;
-    }
-
-    public void setMergedVersions(List<VersionInfo> mergedVersions) {
-        this.mergedVersions = mergedVersions;
-    }
-
     public String getError() {
         return error;
     }
 
     public void setError(String error) {
         this.error = error;
+    }
+
+    public List<Long> getMergedVersions() {
+        return mergedVersions;
+    }
+
+    public void setMergedVersions(List<Long> mergedVersions) {
+        this.mergedVersions = mergedVersions;
     }
 }

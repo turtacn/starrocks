@@ -1201,8 +1201,6 @@ public class GlobalStateMgr {
             // 0. get local node and helper node info
             nodeMgr.initialize(helpers);
 
-            PartialAvailableSinkFactory.init();
-
             // 1. create dirs and files
             if (Config.edit_log_type.equalsIgnoreCase("bdb")) {
                 File imageDir = new File(getImageDirPath());

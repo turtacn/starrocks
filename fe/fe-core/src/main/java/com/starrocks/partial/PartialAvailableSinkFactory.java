@@ -1,7 +1,7 @@
 package com.starrocks.partial;
 
-import com.starrocks.analysis.TupleDescriptor;
 import com.starrocks.catalog.OlapTable;
+import com.starrocks.planner.TupleDescriptor;
 import com.starrocks.common.Config;
 import com.starrocks.partial.write.AsyncTempTabletCreator;
 import com.starrocks.partial.write.EnhancedOlapTableSink;

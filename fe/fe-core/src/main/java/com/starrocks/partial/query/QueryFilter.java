@@ -1,15 +1,27 @@
+// Copyright 2021-present StarRocks, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package com.starrocks.partial.query;
 
-import com.starrocks.analysis.QueryStmt;
+import com.starrocks.sql.ast.QueryStatement;
 import com.starrocks.partial.FailureDetector;
 import com.starrocks.planner.OlapScanNode;
 import com.starrocks.planner.PlanNode;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 public class QueryFilter {
     private static final Logger LOG = LogManager.getLogger(QueryFilter.class);
@@ -20,30 +32,30 @@ public class QueryFilter {
         this.failureDetector = failureDetector;
     }
 
-    public void filter(QueryStmt queryStmt, PlanNode plan) {
-        // This is a placeholder for the query filtering logic.
-        // The actual implementation would involve traversing the plan,
-        // finding the OlapScanNodes, and removing the tablets that are on failed BEs.
-        LOG.info("Applying query filter...");
+    public void filter(QueryStatement queryStmt, PlanNode plan) {
+        if (plan == null) {
+            return;
+        }
+
+        LOG.info("Applying partial availability query filter...");
 
         List<OlapScanNode> scanNodes = findOlapScanNodes(plan);
         for (OlapScanNode scanNode : scanNodes) {
             try {
                 List<Long> originalTabletIds = scanNode.getScanTabletIds();
-                List<Long> filteredTabletIds = originalTabletIds.stream()
-                        .filter(tabletId -> !failureDetector.isTabletFailed(tabletId))
-                        .collect(Collectors.toList());
+                if (originalTabletIds == null || originalTabletIds.isEmpty()) {
+                    continue;
+                }
+
+                scanNode.filterScanTablets(tabletId -> !failureDetector.isTabletFailed(tabletId));
+
+                List<Long> filteredTabletIds = scanNode.getScanTabletIds();
 
                 if (originalTabletIds.size() != filteredTabletIds.size()) {
-                    LOG.warn("Query filtered. Original tablets: {}, Filtered tablets: {}",
-                            originalTabletIds, filteredTabletIds);
-                    // There is no public setter for the tablet IDs on OlapScanNode.
-                    // A proper hook mechanism would be needed to apply this filter.
-                    // For now, this method only logs the filtering action.
-                    // A possible solution is to use reflection to modify the private field,
-                    // but that is not a good practice.
-                    // Another solution is to modify the OlapScanNode class to add a setter,
-                    // but that would be an intrusive change.
+                    LOG.warn("Query filtered for table {}. Original tablets count: {}, Filtered tablets count: {}",
+                            scanNode.getOlapTable().getName(), originalTabletIds.size(), filteredTabletIds.size());
+                    // In the future, we might want to add a warning to the ConnectContext
+                    // so the user is notified about the partial result.
                 }
             } catch (Exception e) {
                 LOG.warn("Failed to filter tablets for scan node: " + scanNode.getId(), e);
@@ -53,18 +65,18 @@ public class QueryFilter {
 
     private List<OlapScanNode> findOlapScanNodes(PlanNode plan) {
         List<OlapScanNode> scanNodes = new ArrayList<>();
-        findOlapScanNodes(plan, scanNodes);
+        findOlapScanNodesRecursive(plan, scanNodes);
         return scanNodes;
     }
 
-    private void findOlapScanNodes(PlanNode plan, List<OlapScanNode> scanNodes) {
+    private void findOlapScanNodesRecursive(PlanNode plan, List<OlapScanNode> scanNodes) {
         if (plan instanceof OlapScanNode) {
             scanNodes.add((OlapScanNode) plan);
         }
 
         if (plan.getChildren() != null) {
             for (PlanNode child : plan.getChildren()) {
-                findOlapScanNodes(child, scanNodes);
+                findOlapScanNodesRecursive(child, scanNodes);
             }
         }
     }

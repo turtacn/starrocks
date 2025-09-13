@@ -236,6 +236,12 @@ public class OlapScanNode extends ScanNode {
         return scanTabletIds;
     }
 
+    public void filterScanTablets(Predicate<Long> predicate) {
+        if (this.scanTabletIds != null) {
+            this.scanTabletIds = this.scanTabletIds.stream().filter(predicate).collect(Collectors.toList());
+        }
+    }
+
     public boolean isPreAggregation() {
         return isPreAggregation;
     }

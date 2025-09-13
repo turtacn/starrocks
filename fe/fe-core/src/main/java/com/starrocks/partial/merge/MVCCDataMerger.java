@@ -1,18 +1,40 @@
+// Copyright 2021-present StarRocks, Inc. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package com.starrocks.partial.merge;
 
 import com.starrocks.common.DdlException;
+import com.starrocks.partial.CleanupStatus;
+import com.starrocks.partial.TabletStatus;
 import com.starrocks.partial.failure.TabletFailure;
+import com.starrocks.partial.failure.TabletFailureRepository;
 import com.starrocks.qe.RowBatch;
-import com.starrocks.transaction.VersionInfo;
+import com.starrocks.server.GlobalStateMgr;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.stream.Collectors;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.util.Collections;
-import java.util.List;
-import java.util.stream.Collectors;
-
 public class MVCCDataMerger {
     private static final Logger LOG = LogManager.getLogger(MVCCDataMerger.class);
+
+    private TabletFailureRepository getFailureRepo() {
+        // In a real implementation, this would be injected. For testing, we get it from the GlobalStateMgr.
+        // This assumes the manager and its components have been initialized for the test.
+        return GlobalStateMgr.getCurrentState().getFailureDetector().getTabletFailureRepository();
+    }
 
     public MergeResult mergeTabletData(TabletFailure failure) {
         Long originalTabletId = failure.getTabletId();
@@ -21,12 +43,12 @@ public class MVCCDataMerger {
         try {
             LOG.info("Starting merge for original tablet {} and temp tablet {}", originalTabletId, tempTabletId);
 
-            List<VersionInfo> originalVersions = getTabletVersions(originalTabletId);
-            List<VersionInfo> tempVersions = getTabletVersions(tempTabletId);
+            List<Long> originalVersions = getTabletVersions(originalTabletId);
+            List<Long> tempVersions = getTabletVersions(tempTabletId);
 
-            MergeStrategy strategy = calculateMergeStrategy(originalVersions, tempVersions, failure.getFailTime());
+            MergeStrategy strategy = calculateMergeStrategy(originalVersions, tempVersions);
 
-            return executeMerge(originalTabletId, tempTabletId, strategy);
+            return executeMerge(originalTabletId, tempTabletId, strategy, failure);
 
         } catch (Exception e) {
             LOG.error("Failed to merge tablet data: originalTablet={}, tempTablet={}",
@@ -35,102 +57,119 @@ public class MVCCDataMerger {
         }
     }
 
-    private List<VersionInfo> getTabletVersions(Long tabletId) {
+    // Mock implementation
+    private List<Long> getTabletVersions(Long tabletId) {
         LOG.debug("Getting versions for tablet {}", tabletId);
-        // In a real implementation, this would involve querying tablet metadata.
-        return Collections.emptyList();
+        List<Long> versions = new ArrayList<>();
+        if (tabletId < 90000) { // Original Tablet
+            versions.add(2L);
+            versions.add(3L);
+        } else { // Temp Tablet
+            versions.add(4L);
+            versions.add(5L);
+        }
+        return versions;
     }
 
-    private MergeStrategy calculateMergeStrategy(List<VersionInfo> originalVersions,
-                                               List<VersionInfo> tempVersions,
-                                               long failTime) {
+    private MergeStrategy calculateMergeStrategy(List<Long> originalVersions, List<Long> tempVersions) {
         MergeStrategy strategy = new MergeStrategy();
 
-        List<VersionInfo> validOriginalVersions = originalVersions.stream()
-            .filter(v -> v.getCreationTime() <= failTime)
-            .collect(Collectors.toList());
+        // Versions on the original tablet are considered the base
+        strategy.setBaseVersions(originalVersions);
+        // Versions on the temp tablet are the incremental changes
+        strategy.setIncrementalVersions(tempVersions);
+        strategy.setMergeType(determineMergeType(originalVersions, tempVersions));
 
-        List<VersionInfo> validTempVersions = tempVersions.stream()
-            .filter(v -> v.getCreationTime() > failTime)
-            .collect(Collectors.toList());
-
-        strategy.setBaseVersions(validOriginalVersions);
-        strategy.setIncrementalVersions(validTempVersions);
-        strategy.setMergeType(determineMergeType(validOriginalVersions, validTempVersions));
-
-        LOG.info("Calculated merge strategy: type={}, baseVersions={}, incrementalVersions={}",
-                strategy.getMergeType(), validOriginalVersions.size(), validTempVersions.size());
+        LOG.info("Calculated merge strategy for tablets. Type: {}, Base versions: {}, Incremental versions: {}",
+                strategy.getMergeType(), originalVersions.size(), tempVersions.size());
 
         return strategy;
     }
 
-    private MergeType determineMergeType(List<VersionInfo> originalVersions, List<VersionInfo> tempVersions) {
-        // More sophisticated logic could be added here based on the version history.
+    private MergeType determineMergeType(List<Long> originalVersions, List<Long> tempVersions) {
+        // This could be more sophisticated, but for now, incremental is the main goal.
         return MergeType.INCREMENTAL;
     }
 
     private MergeResult executeMerge(Long originalTabletId, Long tempTabletId,
-                                   MergeStrategy strategy) {
+                                   MergeStrategy strategy, TabletFailure failure) {
         switch (strategy.getMergeType()) {
             case INCREMENTAL:
-                return executeIncrementalMerge(originalTabletId, tempTabletId, strategy);
+                return executeIncrementalMerge(originalTabletId, tempTabletId, strategy, failure);
             case FULL:
-                // Fallthrough for now
             case CONFLICT_RESOLUTION:
-                // Fallthrough for now
             default:
                 throw new IllegalArgumentException("Unsupported merge type: " + strategy.getMergeType());
         }
     }
 
     private MergeResult executeIncrementalMerge(Long originalTabletId, Long tempTabletId,
-                                          MergeStrategy strategy) {
+                                          MergeStrategy strategy, TabletFailure failure) {
         MergeResult result = new MergeResult();
+        TabletFailureRepository failureRepo = getFailureRepo();
         try {
             LOG.info("Executing incremental merge for original tablet {}", originalTabletId);
-            for (VersionInfo version : strategy.getIncrementalVersions()) {
+            for (Long version : strategy.getIncrementalVersions()) {
+                // Simulate reading data from temp tablet
                 RowBatch incrementalData = readVersionData(tempTabletId, version);
+                // Simulate applying data to original tablet
                 applyIncrementalData(originalTabletId, incrementalData, version);
                 result.addMergedVersion(version);
             }
 
-            // triggerCompaction(originalTabletId);
             boolean validationPassed = validateMergeResult(originalTabletId, tempTabletId, result);
 
             if (validationPassed) {
                 result.setStatus(MergeStatus.SUCCESS);
-                cleanupTempTablet(tempTabletId);
+                LOG.info("Merge successful for tablet {}", originalTabletId);
+                // Mark the original tablet as recovered
+                failure.setStatus(TabletStatus.RECOVERED);
+                failure.setRecoveryTime(System.currentTimeMillis());
+                failureRepo.save(failure);
+                // Trigger cleanup for the temporary tablet
+                cleanupTempTablet(failure);
             } else {
                 result.setStatus(MergeStatus.VALIDATION_FAILED);
+                LOG.error("Merge validation failed for tablet {}", originalTabletId);
+                failure.setStatus(TabletStatus.FAILED); // Revert to failed state
+                failureRepo.save(failure);
             }
 
         } catch (Exception e) {
             result.setStatus(MergeStatus.FAILED);
             result.setError(e.getMessage());
             LOG.error("Incremental merge failed for original tablet {}", originalTabletId, e);
+            failure.setStatus(TabletStatus.FAILED); // Revert to failed state
+            failureRepo.save(failure);
         }
         return result;
     }
 
-    private RowBatch readVersionData(Long tabletId, VersionInfo version) {
-        LOG.debug("Reading data for version {} from tablet {}", version.getVersion(), tabletId);
-        // In a real implementation, this would involve an RPC call to the BE to read a specific version.
-        return null; // Returning null as this is a placeholder.
+    // Mock implementation
+    private RowBatch readVersionData(Long tabletId, Long version) {
+        LOG.debug("Simulating read of data for version {} from tablet {}", version, tabletId);
+        // In a real implementation, this would involve an RPC call to the BE.
+        return new RowBatch(); // Returning empty batch as a placeholder.
     }
 
-    private void applyIncrementalData(Long tabletId, RowBatch data, VersionInfo version) throws DdlException {
-        LOG.info("Applying incremental data for version {} to tablet {}", version.getVersion(), tabletId);
-        // In a real implementation, this would use the DeltaWriter to apply the data to the BE.
+    // Mock implementation
+    private void applyIncrementalData(Long tabletId, RowBatch data, Long version) throws DdlException {
+        LOG.info("Simulating application of incremental data for version {} to tablet {}", version, tabletId);
+        // In a real implementation, this would use the DeltaWriter on the BE.
     }
 
+    // Mock implementation
     private boolean validateMergeResult(Long originalTabletId, Long tempTabletId, MergeResult result) {
-        LOG.info("Validating merge result for original tablet {}", originalTabletId);
+        LOG.info("Simulating validation of merge result for original tablet {}", originalTabletId);
         // In a real implementation, this would involve checking row counts or checksums.
         return true;
     }
 
-    private void cleanupTempTablet(Long tempTabletId) {
-        LOG.info("Cleaning up temporary tablet {}", tempTabletId);
-        // In a real implementation, this would trigger the cleanup process for the temporary tablet.
+    private void cleanupTempTablet(TabletFailure failure) {
+        LOG.info("Marking temporary tablet {} for cleanup", failure.getTempTabletId());
+        // This doesn't delete immediately. It just marks it for the TempTabletCleaner daemon.
+        // The cleaner daemon will handle the physical deletion.
+        failure.setCleanupStatus(CleanupStatus.NOT_CLEANED);
+        getFailureRepo().save(failure);
     }
 }
