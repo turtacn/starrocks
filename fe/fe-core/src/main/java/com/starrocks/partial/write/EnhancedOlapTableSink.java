@@ -1,6 +1,6 @@
 package com.starrocks.partial.write;
 
-import com.starrocks.analysis.TupleDescriptor;
+import com.starrocks.planner.TupleDescriptor;
 import com.starrocks.catalog.MaterializedIndex.IndexExtState;
 import com.starrocks.catalog.OlapTable;
 import com.starrocks.catalog.PhysicalPartition;

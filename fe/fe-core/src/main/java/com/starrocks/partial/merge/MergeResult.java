@@ -1,15 +1,15 @@
 package com.starrocks.partial.merge;
 
-import com.starrocks.transaction.VersionInfo;
+import com.starrocks.thrift.TTabletVersionInfo;
 import java.util.ArrayList;
 import java.util.List;
 
 public class MergeResult {
     private MergeStatus status;
-    private List<VersionInfo> mergedVersions = new ArrayList<>();
+    private List<TTabletVersionInfo> mergedVersions = new ArrayList<>();
     private String error;
 
-    public void addMergedVersion(VersionInfo version) {
+    public void addMergedVersion(TTabletVersionInfo version) {
         this.mergedVersions.add(version);
     }
 
@@ -21,11 +21,11 @@ public class MergeResult {
         this.status = status;
     }
 
-    public List<VersionInfo> getMergedVersions() {
+    public List<TTabletVersionInfo> getMergedVersions() {
         return mergedVersions;
     }
 
-    public void setMergedVersions(List<VersionInfo> mergedVersions) {
+    public void setMergedVersions(List<TTabletVersionInfo> mergedVersions) {
         this.mergedVersions = mergedVersions;
     }
 

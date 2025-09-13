@@ -3,7 +3,7 @@ package com.starrocks.partial.merge;
 import com.starrocks.common.DdlException;
 import com.starrocks.partial.failure.TabletFailure;
 import com.starrocks.qe.RowBatch;
-import com.starrocks.transaction.VersionInfo;
+import com.starrocks.thrift.TTabletVersionInfo;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -21,8 +21,8 @@ public class MVCCDataMerger {
         try {
             LOG.info("Starting merge for original tablet {} and temp tablet {}", originalTabletId, tempTabletId);
 
-            List<VersionInfo> originalVersions = getTabletVersions(originalTabletId);
-            List<VersionInfo> tempVersions = getTabletVersions(tempTabletId);
+            List<TTabletVersionInfo> originalVersions = getTabletVersions(originalTabletId);
+            List<TTabletVersionInfo> tempVersions = getTabletVersions(tempTabletId);
 
             MergeStrategy strategy = calculateMergeStrategy(originalVersions, tempVersions, failure.getFailTime());
 
@@ -35,7 +35,7 @@ public class MVCCDataMerger {
         }
     }
 
-    private List<VersionInfo> getTabletVersions(Long tabletId) {
+    private List<TTabletVersionInfo> getTabletVersions(Long tabletId) {
         LOG.debug("Getting versions for tablet {}", tabletId);
         // In a real implementation, this would involve querying tablet metadata.
         return Collections.emptyList();

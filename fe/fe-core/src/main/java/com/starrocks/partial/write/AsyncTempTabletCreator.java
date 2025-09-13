@@ -1,6 +1,6 @@
 package com.starrocks.partial.write;
 
-import com.starrocks.catalog.TabletSchema;
+import com.starrocks.catalog.SchemaInfo;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -24,7 +24,7 @@ public class AsyncTempTabletCreator {
     }
 
     public CompletableFuture<TempTablet> createTempTabletAsync(Long originalTabletId,
-                                                               TabletSchema schema) {
+                                                               SchemaInfo schema) {
         return creationTasks.computeIfAbsent(originalTabletId, id ->
             CompletableFuture.supplyAsync(() -> {
                 try {
@@ -44,7 +44,7 @@ public class AsyncTempTabletCreator {
         );
     }
 
-    private TempTablet doCreateTempTablet(Long originalTabletId, TabletSchema schema) throws Exception {
+    private TempTablet doCreateTempTablet(Long originalTabletId, SchemaInfo schema) throws Exception {
         LOG.info("Creating temporary tablet for original tablet {}", originalTabletId);
         // In a real implementation, this would involve selecting a healthy BE
         // and making an RPC call to create a new tablet.

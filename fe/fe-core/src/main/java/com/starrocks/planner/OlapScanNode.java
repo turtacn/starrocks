@@ -236,6 +236,13 @@ public class OlapScanNode extends ScanNode {
         return scanTabletIds;
     }
 
+    public void filterTablets(java.util.function.Predicate<Long> predicate) {
+        scanTabletIds.removeIf(predicate.negate());
+        // also need to update other related fields
+        this.selectedTabletsNum = scanTabletIds.size();
+        this.partitionToScanTabletMap = mapTabletsToPartitions();
+    }
+
     public boolean isPreAggregation() {
         return isPreAggregation;
     }

@@ -1,26 +1,26 @@
 package com.starrocks.partial.merge;
 
-import com.starrocks.transaction.VersionInfo;
+import com.starrocks.thrift.TTabletVersionInfo;
 import java.util.List;
 
 public class MergeStrategy {
-    private List<VersionInfo> baseVersions;
-    private List<VersionInfo> incrementalVersions;
+    private List<TTabletVersionInfo> baseVersions;
+    private List<TTabletVersionInfo> incrementalVersions;
     private MergeType mergeType;
 
-    public List<VersionInfo> getBaseVersions() {
+    public List<TTabletVersionInfo> getBaseVersions() {
         return baseVersions;
     }
 
-    public void setBaseVersions(List<VersionInfo> baseVersions) {
+    public void setBaseVersions(List<TTabletVersionInfo> baseVersions) {
         this.baseVersions = baseVersions;
     }
 
-    public List<VersionInfo> getIncrementalVersions() {
+    public List<TTabletVersionInfo> getIncrementalVersions() {
         return incrementalVersions;
     }
 
-    public void setIncrementalVersions(List<VersionInfo> incrementalVersions) {
+    public void setIncrementalVersions(List<TTabletVersionInfo> incrementalVersions) {
         this.incrementalVersions = incrementalVersions;
     }
 
