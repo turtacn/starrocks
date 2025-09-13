@@ -91,6 +91,9 @@ import com.starrocks.planner.NestLoopJoinNode;
 import com.starrocks.planner.OdpsScanNode;
 import com.starrocks.planner.OlapScanNode;
 import com.starrocks.planner.OlapTableSink;
+import com.starrocks.partial.query.QueryFilter;
+import com.starrocks.partial.FailureDetector;
+import com.starrocks.partial.PartialAvailableSinkFactory;
 import com.starrocks.planner.PaimonScanNode;
 import com.starrocks.planner.PlanFragment;
 import com.starrocks.planner.PlanNode;
@@ -301,7 +304,7 @@ public class PlanFragmentBuilder {
         view.setMaintenancePlan(execPlan);
         List<Long> fakePartitionIds = Arrays.asList(1L, 2L, 3L);
 
-        DataSink tableSink = new OlapTableSink(view, tupleDesc, fakePartitionIds,
+        DataSink tableSink = PartialAvailableSinkFactory.create(view, tupleDesc, fakePartitionIds,
                 view.writeQuorum(), view.enableReplicatedStorage(), false, false,
                 connectContext.getCurrentComputeResource());
         execPlan.getTopFragment().setSink(tableSink);
@@ -978,6 +981,14 @@ public class PlanFragmentBuilder {
 
             scanNode.setUsePkIndex(node.isUsePkIndex());
             context.getScanNodes().add(scanNode);
+            if (Config.partial_available_enabled) {
+                GlobalStateMgr gsm = GlobalStateMgr.getCurrentState();
+                FailureDetector failureDetector = gsm.getFailureDetector();
+                if (failureDetector != null) {
+                    QueryFilter queryFilter = new QueryFilter(failureDetector);
+                    queryFilter.filter(null, scanNode);
+                }
+            }
             PlanFragment fragment =
                     new PlanFragment(context.getNextFragmentId(), scanNode, DataPartition.RANDOM);
             fragment.setQueryGlobalDicts(node.getGlobalDicts());

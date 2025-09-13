@@ -68,6 +68,7 @@ import com.starrocks.thrift.TQueryType;
 import com.starrocks.thrift.TResultSinkType;
 import com.starrocks.thrift.TScanRangeLocations;
 import com.starrocks.thrift.TScanRangeParams;
+import com.starrocks.partial.PartialAvailableSinkFactory;
 import com.starrocks.thrift.TUniqueId;
 import com.starrocks.thrift.TWriteQuorumType;
 import com.starrocks.warehouse.cngroup.ComputeResource;
@@ -205,7 +206,7 @@ public class StreamLoadPlanner {
         } else {
             enableAutomaticPartition = destTable.supportedAutomaticPartition();
         }
-        OlapTableSink olapTableSink = new OlapTableSink(destTable, tupleDesc, partitionIds, writeQuorum,
+        OlapTableSink olapTableSink = PartialAvailableSinkFactory.create(destTable, tupleDesc, partitionIds, writeQuorum,
                 destTable.enableReplicatedStorage(), scanNode.nullExprInAutoIncrement(),
                 enableAutomaticPartition, computeResource);
         if (missAutoIncrementColumn.size() == 1 && missAutoIncrementColumn.get(0) == Boolean.TRUE) {

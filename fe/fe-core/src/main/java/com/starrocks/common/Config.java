@@ -3887,4 +3887,18 @@ public class Config extends ConfigBase {
 
     @ConfField(mutable = true, comment = "Enable desensitize sql in query dump")
     public static boolean enable_desensitize_query_dump = false;
+
+    @ConfField(mutable = true, comment = "Enable partial available feature. " +
+            "If true, when a BE node is down, queries that do not involve the failed BE node can still be executed.")
+    public static boolean partial_available_enabled = false;
+
+    // Partial availability feature configurations
+    @ConfField(mutable = true, comment = "The thread pool size for asynchronously creating temporary tablets.")
+    public static int temp_tablet_creator_thread_pool_size = 10;
+
+    @ConfField(mutable = true, comment = "The timeout in seconds for buffered write requests.")
+    public static int write_buffer_timeout_seconds = 5;
+
+    @ConfField(mutable = true, comment = "The maximum number of buffered write requests.")
+    public static int max_buffered_write_requests = 1000;
 }

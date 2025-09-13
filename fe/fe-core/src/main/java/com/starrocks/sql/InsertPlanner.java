@@ -47,6 +47,7 @@ import com.starrocks.planner.IcebergTableSink;
 import com.starrocks.planner.MysqlTableSink;
 import com.starrocks.planner.OlapTableSink;
 import com.starrocks.planner.PlanFragment;
+import com.starrocks.partial.PartialAvailableSinkFactory;
 import com.starrocks.planner.SlotDescriptor;
 import com.starrocks.planner.TableFunctionTableSink;
 import com.starrocks.planner.TupleDescriptor;
@@ -374,7 +375,7 @@ public class InsertPlanner {
                     }
 
                 }
-                dataSink = new OlapTableSink(olapTable, tupleDesc, targetPartitionIds,
+                dataSink = PartialAvailableSinkFactory.create(olapTable, tupleDesc, targetPartitionIds,
                         olapTable.writeQuorum(),
                         forceReplicatedStorage ? true : olapTable.enableReplicatedStorage(),
                         nullExprInAutoIncrement, enableAutomaticPartition, session.getCurrentComputeResource());

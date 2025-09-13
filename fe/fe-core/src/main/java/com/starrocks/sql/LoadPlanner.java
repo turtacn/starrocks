@@ -45,6 +45,7 @@ import com.starrocks.planner.ExchangeNode;
 import com.starrocks.planner.FileScanNode;
 import com.starrocks.planner.OlapTableSink;
 import com.starrocks.planner.PlanFragment;
+import com.starrocks.partial.PartialAvailableSinkFactory;
 import com.starrocks.planner.PlanFragmentId;
 import com.starrocks.planner.PlanNodeId;
 import com.starrocks.planner.ScanNode;
@@ -483,7 +484,7 @@ public class LoadPlanner {
                 enableAutomaticPartition = olapTable.supportedAutomaticPartition();
             }
             Preconditions.checkState(!CollectionUtils.isEmpty(partitionIds));
-            dataSink = new OlapTableSink(olapTable, tupleDesc, partitionIds,
+            dataSink = PartialAvailableSinkFactory.create(olapTable, tupleDesc, partitionIds,
                     olapTable.writeQuorum(), forceReplicatedStorage ? true : ((OlapTable) destTable).enableReplicatedStorage(),
                     checkNullExprInAutoIncrement(), enableAutomaticPartition, computeResource);
             if (this.missAutoIncrementColumn == Boolean.TRUE) {

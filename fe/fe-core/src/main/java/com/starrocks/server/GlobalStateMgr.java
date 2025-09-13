@@ -220,10 +220,22 @@ import com.starrocks.sql.optimizer.statistics.CachedStatisticStorage;
 import com.starrocks.sql.optimizer.statistics.StatisticStorage;
 import com.starrocks.sql.parser.AstBuilder;
 import com.starrocks.sql.parser.SqlParser;
+import com.starrocks.partial.PartialAvailableMetrics;
+import com.starrocks.partial.PartialAvailableSinkFactory;
+import com.starrocks.partial.cleanup.BackendTempTabletCleaner;
+import com.starrocks.partial.cleanup.TempTabletCleaner;
+import com.starrocks.partial.cleanup.TempTabletCleanupMonitor;
+import com.starrocks.partial.merge.DataMerger;
 import com.starrocks.sql.spm.SPMAutoCapturer;
+import com.starrocks.partial.FailureDetector;
+import com.starrocks.partial.failure.InMemoryTabletFailureRepository;
+import com.starrocks.partial.write.AsyncTempTabletCreator;
+import com.starrocks.partial.write.WriteRequestBuffer;
 import com.starrocks.sql.spm.SQLPlanStorage;
 import com.starrocks.staros.StarMgrServer;
 import com.starrocks.statistic.AnalyzeMgr;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import com.starrocks.statistic.StatisticAutoCollector;
 import com.starrocks.statistic.StatisticsMetaManager;
 import com.starrocks.statistic.columns.PredicateColumnsMgr;
@@ -1165,6 +1177,22 @@ public class GlobalStateMgr {
         return Config.meta_dir + IMAGE_DIR;
     }
 
+    private FailureDetector failureDetector;
+    private AsyncTempTabletCreator asyncTempTabletCreator;
+    private WriteRequestBuffer writeRequestBuffer;
+
+    public FailureDetector getFailureDetector() {
+        return failureDetector;
+    }
+
+    public AsyncTempTabletCreator getAsyncTempTabletCreator() {
+        return asyncTempTabletCreator;
+    }
+
+    public WriteRequestBuffer getWriteRequestBuffer() {
+        return writeRequestBuffer;
+    }
+
     public void initialize(String helpers) throws Exception {
         // must judge whether it is first time start here before initializing GlobalStateMgr.
         // Possibly remove clusterId and role to ensure that the system is not left in a half-initialized state.
@@ -1172,6 +1200,8 @@ public class GlobalStateMgr {
         try {
             // 0. get local node and helper node info
             nodeMgr.initialize(helpers);
+
+            PartialAvailableSinkFactory.init();
 
             // 1. create dirs and files
             if (Config.edit_log_type.equalsIgnoreCase("bdb")) {

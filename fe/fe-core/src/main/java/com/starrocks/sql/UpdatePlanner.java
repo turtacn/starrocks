@@ -28,6 +28,7 @@ import com.starrocks.common.StarRocksException;
 import com.starrocks.planner.DataSink;
 import com.starrocks.planner.DescriptorTable;
 import com.starrocks.planner.OlapTableSink;
+import com.starrocks.partial.PartialAvailableSinkFactory;
 import com.starrocks.planner.PlanFragment;
 import com.starrocks.planner.SchemaTableSink;
 import com.starrocks.planner.SlotDescriptor;
@@ -138,7 +139,7 @@ public class UpdatePlanner {
                     partitionIds.add(partition.getId());
                 }
                 OlapTable olapTable = (OlapTable) targetTable;
-                DataSink dataSink = new OlapTableSink(olapTable, olapTuple, partitionIds, olapTable.writeQuorum(),
+                DataSink dataSink = PartialAvailableSinkFactory.create(olapTable, olapTuple, partitionIds, olapTable.writeQuorum(),
                         olapTable.enableReplicatedStorage(), false,
                         olapTable.supportedAutomaticPartition(), session.getCurrentComputeResource());
                 if (updateStmt.usePartialUpdate()) {

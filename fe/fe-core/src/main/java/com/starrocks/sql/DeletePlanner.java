@@ -26,6 +26,7 @@ import com.starrocks.load.Load;
 import com.starrocks.planner.DataSink;
 import com.starrocks.planner.DescriptorTable;
 import com.starrocks.planner.OlapTableSink;
+import com.starrocks.partial.PartialAvailableSinkFactory;
 import com.starrocks.planner.PlanFragment;
 import com.starrocks.planner.SlotDescriptor;
 import com.starrocks.planner.TupleDescriptor;
@@ -107,7 +108,7 @@ public class DeletePlanner {
             for (Partition partition : table.getPartitions()) {
                 partitionIds.add(partition.getId());
             }
-            DataSink dataSink = new OlapTableSink(table, olapTuple, partitionIds, table.writeQuorum(),
+            DataSink dataSink = PartialAvailableSinkFactory.create(table, olapTuple, partitionIds, table.writeQuorum(),
                     table.enableReplicatedStorage(), false, false,
                     session.getCurrentComputeResource());
             execPlan.getFragments().get(0).setSink(dataSink);
