@@ -652,6 +652,9 @@ public class OperationType {
     @IgnorableOnReplayFailed
     public static final short OP_DROP_REPOSITORY_V2 = 13556;
 
+    @IgnorableOnReplayFailed
+    public static final short OP_SAVE_TABLET_FAILURE = 13557;
+
     /**
      * NOTICE: OperationType cannot use a value exceeding 20000, please follow the above sequence number
      */

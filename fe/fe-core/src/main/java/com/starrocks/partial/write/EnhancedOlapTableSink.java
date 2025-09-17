@@ -1,13 +1,15 @@
 package com.starrocks.partial.write;
 
-import com.starrocks.planner.TupleDescriptor;
 import com.starrocks.catalog.MaterializedIndex.IndexExtState;
 import com.starrocks.catalog.OlapTable;
 import com.starrocks.catalog.PhysicalPartition;
 import com.starrocks.catalog.Tablet;
 import com.starrocks.common.StarRocksException;
 import com.starrocks.partial.FailureDetector;
+import com.starrocks.partial.TempTabletManager;
 import com.starrocks.planner.OlapTableSink;
+import com.starrocks.planner.TupleDescriptor;
+import com.starrocks.server.GlobalStateMgr;
 import com.starrocks.thrift.TDataSink;
 import com.starrocks.thrift.TOlapTableIndexTablets;
 import com.starrocks.thrift.TOlapTableLocationParam;
@@ -24,22 +26,24 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 
 public class EnhancedOlapTableSink extends OlapTableSink {
     private static final Logger LOG = LogManager.getLogger(EnhancedOlapTableSink.class);
 
     private final FailureDetector failureDetector;
     private final AsyncTempTabletCreator tempTabletCreator;
-    private final Map<Long, MockTempTablet> tempTabletMap = new HashMap<>();
+    private final TempTabletManager tempTabletManager;
+    private final Map<Long, TempTablet> tempTabletMap = new HashMap<>();
 
     public EnhancedOlapTableSink(OlapTable dstTable, TupleDescriptor tupleDescriptor, List<Long> partitionIds,
                                  TWriteQuorumType writeQuorum, boolean enableReplicatedStorage,
-                                 boolean nullExprInAutoIncrement, boolean enableAutomaticPartition,
-                                 FailureDetector failureDetector, AsyncTempTabletCreator tempTabletCreator) {
+                                 boolean nullExprInAutoIncrement, boolean enableAutomaticPartition) {
         super(dstTable, tupleDescriptor, partitionIds, writeQuorum, enableReplicatedStorage,
                 nullExprInAutoIncrement, enableAutomaticPartition);
-        this.failureDetector = failureDetector;
-        this.tempTabletCreator = tempTabletCreator;
+        this.failureDetector = GlobalStateMgr.getCurrentState().getFailureDetector();
+        this.tempTabletCreator = GlobalStateMgr.getCurrentState().getAsyncTempTabletCreator();
+        this.tempTabletManager = GlobalStateMgr.getCurrentState().getTempTabletManager();
     }
 
     @Override
@@ -51,26 +55,33 @@ public class EnhancedOlapTableSink extends OlapTableSink {
         TOlapTablePartitionParam partitionParam = tSink.getPartition();
 
         // 1. Identify failed tablets and create temporary replacements
+        List<CompletableFuture<Void>> futures = new ArrayList<>();
         for (TOlapTablePartition tPartition : partitionParam.getPartitions()) {
             PhysicalPartition physicalPartition = getDstTable().getPhysicalPartition(tPartition.getId());
             physicalPartition.getMaterializedIndices(IndexExtState.ALL).forEach(index -> {
                 for (Tablet tablet : index.getTablets()) {
                     if (failureDetector.isTabletFailed(tablet.getId())) {
-                        CompletableFuture<TempTablet> future = tempTabletCreator.createTempTabletAsync(tablet.getId(),
-                                getDstTable().getSchemaByIndexId(getDstTable().getBaseIndexId()));
-                        try {
-                            MockTempTablet tempTablet = (MockTempTablet) future.get();
-                            tempTabletMap.put(tablet.getId(), tempTablet);
-                        } catch (Exception e) {
-                            throw new RuntimeException(new StarRocksException("Failed to create temporary tablet", e));
-                        }
+                        CompletableFuture<Void> future = tempTabletCreator.createTempTabletAsync(tablet.getId())
+                                .thenAccept(tempTablet -> {
+                                    synchronized (tempTabletMap) {
+                                        tempTabletMap.put(tablet.getId(), tempTablet);
+                                        tempTabletManager.addTempTablet(tablet.getId(), tempTablet);
+                                    }
+                                });
+                        futures.add(future);
                     }
                 }
             });
         }
 
-        if (tempTabletMap.isEmpty()) {
+        if (futures.isEmpty()) {
             return;
+        }
+
+        try {
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        } catch (Exception e) {
+            throw new StarRocksException("Failed to create temporary tablets", e);
         }
 
         // 2. Rebuild the location parameter
@@ -80,8 +91,17 @@ public class EnhancedOlapTableSink extends OlapTableSink {
             for (TTabletLocation oldLocation : oldLocationParam.getTablets()) {
                 long originalTabletId = oldLocation.getTablet_id();
                 if (tempTabletMap.containsKey(originalTabletId)) {
-                    MockTempTablet tempTablet = tempTabletMap.get(originalTabletId);
-                    TTabletLocation newLocation = new TTabletLocation(tempTablet.getTempTabletId(), List.of(tempTablet.getBackendId()));
+                    TempTablet tempTablet = tempTabletMap.get(originalTabletId);
+                    OlapTable table = (OlapTable) GlobalStateMgr.getCurrentState().getDb(getDstTable().getDbId())
+                            .getTable(getDstTable().getId());
+                    Partition partition = table.getTempPartition(tempTablet.getTempPartitionId());
+                    Tablet tablet = partition.getBaseIndex().getTablet(tempTablet.getTempTabletId());
+                    List<Long> backendIds = tablet.getBackendIds();
+                    List<TNetworkAddress> addresses = backendIds.stream()
+                            .map(beId -> GlobalStateMgr.getCurrentState().getNodeMgr().getClusterInfo().getBackend(beId))
+                            .map(backend -> new TNetworkAddress(backend.getHost(), backend.getBePort()))
+                            .collect(Collectors.toList());
+                    TTabletLocation newLocation = new TTabletLocation(tempTablet.getTempTabletId(), addresses);
                     newLocationParam.addToTablets(newLocation);
                 } else {
                     newLocationParam.addToTablets(oldLocation);

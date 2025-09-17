@@ -222,6 +222,7 @@ import com.starrocks.sql.parser.AstBuilder;
 import com.starrocks.sql.parser.SqlParser;
 import com.starrocks.partial.PartialAvailableMetrics;
 import com.starrocks.partial.PartialAvailableSinkFactory;
+import com.starrocks.partial.TabletFailureMgr;
 import com.starrocks.partial.cleanup.BackendTempTabletCleaner;
 import com.starrocks.partial.cleanup.TempTabletCleaner;
 import com.starrocks.partial.cleanup.TempTabletCleanupMonitor;
@@ -548,6 +549,10 @@ public class GlobalStateMgr {
 
     private final DynamicTabletJobMgr dynamicTabletJobMgr;
 
+    private TabletFailureMgr tabletFailureMgr;
+    private TempTabletManager tempTabletManager;
+    private FrontendDaemon failureDetectorDaemon;
+
     public NodeMgr getNodeMgr() {
         return nodeMgr;
     }
@@ -871,6 +876,27 @@ public class GlobalStateMgr {
         this.jwkMgr = new JwkMgr();
 
         this.dynamicTabletJobMgr = new DynamicTabletJobMgr();
+
+        this.tabletFailureMgr = new TabletFailureMgr();
+        this.tempTabletManager = new TempTabletManager();
+        this.failureDetector = new FailureDetector(tabletFailureMgr.getTabletFailureRepository());
+        this.asyncTempTabletCreator = new AsyncTempTabletCreator();
+        this.writeRequestBuffer = new WriteRequestBuffer();
+        PartialAvailableSinkFactory.setFailureDetector(this.failureDetector);
+        PartialAvailableSinkFactory.setTempTabletCreator(this.asyncTempTabletCreator);
+        this.dataMerger = new DataMerger(tabletFailureMgr.getTabletFailureRepository(), tempTabletManager);
+        this.tempTabletCleaner = new BackendTempTabletCleaner();
+        this.tempTabletCleanupMonitor = new TempTabletCleanupMonitor(
+                tabletFailureMgr.getTabletFailureRepository(), tempTabletCleaner);
+
+        this.failureDetectorDaemon = new FrontendDaemon("FailureDetector", Config.failure_detection_interval * 1000L) {
+            @Override
+            protected void runAfterCatalogReady() {
+                if (Config.partial_available_enabled) {
+                    failureDetector.detectNodeFailures();
+                }
+            }
+        };
     }
 
     public static void destroyCheckpoint() {
@@ -1191,6 +1217,14 @@ public class GlobalStateMgr {
 
     public WriteRequestBuffer getWriteRequestBuffer() {
         return writeRequestBuffer;
+    }
+
+    public TabletFailureMgr getTabletFailureMgr() {
+        return tabletFailureMgr;
+    }
+
+    public TempTabletManager getTempTabletManager() {
+        return tempTabletManager;
     }
 
     public void initialize(String helpers) throws Exception {
@@ -1514,6 +1548,9 @@ public class GlobalStateMgr {
         if (RunMode.isSharedDataMode()) {
             dynamicTabletJobMgr.start();
         }
+        failureDetectorDaemon.start();
+        dataMerger.startMergeDaemon();
+        tempTabletCleanupMonitor.start();
     }
 
     // start threads that should run on all FE
@@ -1651,6 +1688,7 @@ public class GlobalStateMgr {
                 .put(SRMetaBlockID.BLACKLIST_MGR, sqlBlackList::load)
                 .put(SRMetaBlockID.HISTORICAL_NODE_MGR, historicalNodeMgr::load)
                 .put(SRMetaBlockID.DYNAMIC_TABLET_JOB_MGR, dynamicTabletJobMgr::load)
+                .put(SRMetaBlockID.TABLET_FAILURE_MGR, tabletFailureMgr::load)
                 .build();
 
         Set<SRMetaBlockID> metaMgrMustExists = new HashSet<>(loadImages.keySet());
@@ -1874,6 +1912,7 @@ public class GlobalStateMgr {
                 clusterSnapshotMgr.save(imageWriter);
                 historicalNodeMgr.save(imageWriter);
                 dynamicTabletJobMgr.save(imageWriter);
+                tabletFailureMgr.save(imageWriter);
             } catch (SRMetaBlockException e) {
                 LOG.error("Save meta block failed ", e);
                 throw new IOException("Save meta block failed ", e);

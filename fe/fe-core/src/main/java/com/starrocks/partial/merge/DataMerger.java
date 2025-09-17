@@ -1,5 +1,7 @@
 package com.starrocks.partial.merge;
 
+import com.starrocks.common.Config;
+import com.starrocks.partial.TempTabletManager;
 import com.starrocks.partial.TabletStatus;
 import com.starrocks.partial.failure.TabletFailure;
 import com.starrocks.partial.failure.TabletFailureRepository;
@@ -17,19 +19,28 @@ public class DataMerger {
 
     private final ScheduledExecutorService mergeExecutor;
     private final TabletFailureRepository failureRepo;
-    // The design mentions TempTabletManager, I'll assume it's a placeholder for now.
-    // private final TempTabletManager tempTabletManager;
+    private final TempTabletManager tempTabletManager;
+    private MVCCDataMerger mvccDataMerger;
 
-    public DataMerger(TabletFailureRepository failureRepo) {
+    public DataMerger(TabletFailureRepository failureRepo, TempTabletManager tempTabletManager) {
         this.failureRepo = failureRepo;
+        this.tempTabletManager = tempTabletManager;
         this.mergeExecutor = Executors.newSingleThreadScheduledExecutor();
+        this.mvccDataMerger = new MVCCDataMerger();
+    }
+
+    @VisibleForTesting
+    void setMvccDataMerger(MVCCDataMerger mvccDataMerger) {
+        this.mvccDataMerger = mvccDataMerger;
     }
 
     public void startMergeDaemon() {
-        mergeExecutor.scheduleWithFixedDelay(this::scanAndMerge, 30, 60, TimeUnit.SECONDS);
+        if (Config.auto_merge_on_recovery) {
+            mergeExecutor.scheduleWithFixedDelay(this::scanAndMerge, 30, 60, TimeUnit.SECONDS);
+        }
     }
 
-    private void scanAndMerge() {
+    void scanAndMerge() {
         List<TabletFailure> recoveringTablets =
                 failureRepo.getTabletsByStatus(TabletStatus.RECOVERING);
 
@@ -44,9 +55,37 @@ public class DataMerger {
         }
     }
 
-    private MergeResult mergeTabletData(TabletFailure failure) {
-        // This will call MVCCDataMerger
-        MVCCDataMerger mvccDataMerger = new MVCCDataMerger();
-        return mvccDataMerger.mergeTabletData(failure);
+    private void mergeTabletData(TabletFailure failure) {
+        MergeResult result = mvccDataMerger.mergeTabletData(failure);
+
+        if (result.getStatus() == MergeStatus.SUCCESS) {
+            failure.setStatus(TabletStatus.RECOVERED);
+            failure.setRecoveryTime(System.currentTimeMillis());
+            failureRepo.save(failure);
+            GlobalStateMgr.getCurrentState().getEditLog().logSaveTabletFailure(failure);
+            cleanupTemporaryTablet(failure);
+        } else {
+            LOG.error("Failed to merge tablet {}: {}", failure.getTabletId(), result.getError());
+        }
+    }
+
+    private void cleanupTemporaryTablet(TabletFailure failure) {
+        try {
+            TempTablet tempTablet = tempTabletManager.getTempTablet(failure.getTabletId())
+                    .orElseThrow(() -> new RuntimeException("Temp tablet not found for original tablet " + failure.getTabletId()));
+
+            OlapTable table = (OlapTable) GlobalStateMgr.getCurrentState().getDb(failure.getTableId())
+                    .getTable(failure.getTableId());
+            if (table != null) {
+                Partition tempPartition = table.getTempPartition(tempTablet.getTempPartitionId());
+                if (tempPartition != null) {
+                    table.dropTempPartition(tempPartition.getName(), true);
+                    LOG.info("Dropped temporary partition {} for tablet {}", tempPartition.getName(), failure.getTabletId());
+                }
+            }
+            tempTabletManager.removeTempTablet(failure.getTabletId());
+        } catch (Exception e) {
+            LOG.error("Failed to cleanup temporary tablet for original tablet {}", failure.getTabletId(), e);
+        }
     }
 }

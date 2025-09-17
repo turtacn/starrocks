@@ -1,56 +1,77 @@
 package com.starrocks.partial.write;
 
-import com.starrocks.catalog.SchemaInfo;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
+import com.google.common.collect.Maps;
+import com.starrocks.catalog.Database;
+import com.starrocks.catalog.DistributionInfo;
+import com.starrocks.catalog.OlapTable;
+import com.starrocks.catalog.Partition;
+import com.starrocks.catalog.PartitionKey;
+import com.starrocks.catalog.SingleRangePartitionDesc;
+import com.starrocks.catalog.TabletInvertedIndex;
+import com.starrocks.common.DdlException;
+import com.starrocks.qe.ConnectContext;
+import com.starrocks.server.GlobalStateMgr;
+import com.starrocks.sql.ast.AddPartitionClause;
+import com.starrocks.sql.ast.PartitionKeyDesc;
+import com.starrocks.sql.ast.PartitionValue;
 
+import java.util.Collections;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.CompletionException;
 
 public class AsyncTempTabletCreator {
-    private static final Logger LOG = LogManager.getLogger(AsyncTempTabletCreator.class);
 
-    private final ExecutorService creatorExecutor;
-    private final ConcurrentHashMap<Long, CompletableFuture<TempTablet>> creationTasks;
-    private final ConcurrentHashMap<Long, TempTablet> tempTabletCache;
-    private final AtomicLong nextTempTabletId = new AtomicLong(90000L);
-
-    public AsyncTempTabletCreator(ExecutorService executorService) {
-        this.creatorExecutor = executorService;
-        this.creationTasks = new ConcurrentHashMap<>();
-        this.tempTabletCache = new ConcurrentHashMap<>();
-    }
-
-    public CompletableFuture<TempTablet> createTempTabletAsync(Long originalTabletId,
-                                                               SchemaInfo schema) {
-        return creationTasks.computeIfAbsent(originalTabletId, id ->
-            CompletableFuture.supplyAsync(() -> {
-                try {
-                    TempTablet cachedTablet = tempTabletCache.get(id);
-                    if (cachedTablet != null) {
-                        return cachedTablet;
-                    }
-                    TempTablet tempTablet = doCreateTempTablet(id, schema);
-                    tempTabletCache.put(id, tempTablet);
-                    return tempTablet;
-                } catch (Exception e) {
-                    LOG.error("Failed to create temp tablet for {}", id, e);
-                    creationTasks.remove(id);
-                    throw new RuntimeException(e);
+    public CompletableFuture<TempTablet> createTempTabletAsync(long originalTabletId) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                GlobalStateMgr gsm = GlobalStateMgr.getCurrentState();
+                TabletInvertedIndex invertedIndex = gsm.getTabletInvertedIndex();
+                long tableId = invertedIndex.getTableId(originalTabletId);
+                Database db = gsm.getDb(invertedIndex.getDbId(originalTabletId));
+                if (db == null) {
+                    throw new DdlException("Database not found for tablet " + originalTabletId);
                 }
-            }, creatorExecutor)
-        );
-    }
+                OlapTable table = (OlapTable) db.getTable(tableId);
+                if (table == null) {
+                    throw new DdlException("Table not found for tablet " + originalTabletId);
+                }
 
-    private TempTablet doCreateTempTablet(Long originalTabletId, SchemaInfo schema) throws Exception {
-        LOG.info("Creating temporary tablet for original tablet {}", originalTabletId);
-        // In a real implementation, this would involve selecting a healthy BE
-        // and making an RPC call to create a new tablet.
-        // For now, we simulate this by creating a mock tablet object.
-        long backendId = 10001L; // Mock BE ID
-        long tempTabletId = nextTempTabletId.getAndIncrement();
-        return new MockTempTablet(tempTabletId, backendId);
+                String tempPartitionName = "__temp_partial_" + originalTabletId;
+                if (table.getTempPartition(tempPartitionName) != null) {
+                    // temp partition already exists, just return it.
+                    Partition tempPartition = table.getTempPartition(tempPartitionName);
+                    return new TempTablet(tempPartition.getId(), tempPartition.getBaseIndex().getTablets().get(0).getId());
+                }
+
+                // For simplicity, we only support range-partitioned tables for now, and we create a new partition
+                // that covers a very large range to avoid conflicts.
+                // A more robust solution would be to create a partition with a range that is specific to the failed tablet.
+                PartitionKeyDesc partitionKeyDesc = new PartitionKeyDesc(Collections.singletonList(new PartitionValue(Long.MAX_VALUE)));
+                SingleRangePartitionDesc partitionDesc = new SingleRangePartitionDesc(
+                        true,
+                        tempPartitionName,
+                        partitionKeyDesc,
+                        Maps.newHashMap());
+
+                AddPartitionClause addPartitionClause = new AddPartitionClause(
+                        partitionDesc,
+                        table.getDefaultDistributionInfo().copy(),
+                        Maps.newHashMap(),
+                        true
+                );
+
+                gsm.getLocalMetastore().addPartitions(ConnectContext.get(), db, table.getName(), addPartitionClause);
+
+                Partition tempPartition = table.getTempPartition(tempPartitionName);
+                if (tempPartition == null) {
+                    throw new DdlException("Failed to create temp partition " + tempPartitionName);
+                }
+                long tempTabletId = tempPartition.getBaseIndex().getTablets().get(0).getId();
+
+                return new TempTablet(tempPartition.getId(), tempTabletId);
+            } catch (Exception e) {
+                throw new CompletionException(e);
+            }
+        });
     }
 }

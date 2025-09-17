@@ -1,14 +1,16 @@
 package com.starrocks.partial.query;
 
-import com.starrocks.sql.ast.QueryStatement;
+import com.starrocks.common.StarRocksException;
 import com.starrocks.partial.FailureDetector;
 import com.starrocks.planner.OlapScanNode;
 import com.starrocks.planner.PlanNode;
+import com.starrocks.sql.ast.QueryStatement;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 public class QueryFilter {
@@ -20,22 +22,27 @@ public class QueryFilter {
         this.failureDetector = failureDetector;
     }
 
-    public void filter(QueryStatement queryStmt, PlanNode plan) {
+    public void filter(QueryStatement queryStmt, PlanNode plan) throws StarRocksException {
         List<OlapScanNode> scanNodes = findOlapScanNodes(plan);
         for (OlapScanNode scanNode : scanNodes) {
-            try {
-                List<Long> originalTabletIds = new ArrayList<>(scanNode.getScanTabletIds());
-                scanNode.filterTablets(tabletId -> !failureDetector.isTabletFailed(tabletId));
-                List<Long> filteredTabletIds = scanNode.getScanTabletIds();
+            Set<Long> requiredTablets = scanNode.getScanTabletIds().stream().collect(Collectors.toSet());
+            Set<Long> failedTablets = failureDetector.getFailedTablets(scanNode.getOlapTable().getId());
 
-                if (originalTabletIds.size() != filteredTabletIds.size()) {
-                    LOG.warn("Query filtered. Original tablets: {}, Filtered tablets: {}",
-                            originalTabletIds, filteredTabletIds);
-                }
-            } catch (Exception e) {
-                LOG.warn("Failed to filter tablets for scan node: " + scanNode.getId(), e);
+            if (canPruneQuery(requiredTablets, failedTablets)) {
+                scanNode.filterTablets(tabletId -> !failureDetector.isTabletFailed(tabletId));
+                LOG.info("Query filtered. Original tablets: {}, Filtered tablets: {}",
+                        requiredTablets, scanNode.getScanTabletIds());
+            } else {
+                throw new StarRocksException("Query failed due to unavailable tablets");
             }
         }
+    }
+
+    public boolean canPruneQuery(Set<Long> requiredTablets, Set<Long> failedTablets) {
+        if (failedTablets == null || failedTablets.isEmpty()) {
+            return true;
+        }
+        return requiredTablets.stream().noneMatch(failedTablets::contains);
     }
 
     private List<OlapScanNode> findOlapScanNodes(PlanNode plan) {

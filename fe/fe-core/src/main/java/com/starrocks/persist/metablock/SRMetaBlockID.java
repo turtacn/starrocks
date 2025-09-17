@@ -105,6 +105,8 @@ public class SRMetaBlockID {
 
     public static final SRMetaBlockID DYNAMIC_TABLET_JOB_MGR = new SRMetaBlockID(36);
 
+    public static final SRMetaBlockID TABLET_FAILURE_MGR = new SRMetaBlockID(37);
+
     /**
      * NOTICE: SRMetaBlockID cannot use a value exceeding 20000, please follow the above sequence number
      */

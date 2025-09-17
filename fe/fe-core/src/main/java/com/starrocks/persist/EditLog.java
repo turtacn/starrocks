@@ -567,6 +567,12 @@ public class EditLog {
                     globalStateMgr.getBackupHandler().getRepoMgr().removeRepo(dropRepositoryLog.getRepositoryName(), true);
                     break;
                 }
+            case OperationType.OP_SAVE_TABLET_FAILURE: {
+                com.starrocks.partial.failure.TabletFailure tabletFailure =
+                        (com.starrocks.partial.failure.TabletFailure) journal.getData();
+                globalStateMgr.getTabletFailureMgr().replaySave(tabletFailure);
+                break;
+            }
                 case OperationType.OP_TRUNCATE_TABLE: {
                     TruncateTableInfo info = (TruncateTableInfo) journal.data();
                     globalStateMgr.getLocalMetastore().replayTruncateTable(info);
@@ -1413,6 +1419,10 @@ public class EditLog {
 
     public void logSaveTransactionId(long transactionId) {
         logJsonObject(OperationType.OP_SAVE_TRANSACTION_ID_V2, new TransactionIdInfo(transactionId));
+    }
+
+    public void logSaveTabletFailure(com.starrocks.partial.failure.TabletFailure tabletFailure) {
+        logEdit(OperationType.OP_SAVE_TABLET_FAILURE, tabletFailure);
     }
 
     public void logSaveAutoIncrementId(AutoIncrementInfo info) {

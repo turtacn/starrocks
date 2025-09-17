@@ -3901,4 +3901,28 @@ public class Config extends ConfigBase {
 
     @ConfField(mutable = true, comment = "The maximum number of buffered write requests.")
     public static int max_buffered_write_requests = 1000;
+
+    @ConfField(mutable = true, comment = "Enable partial availability feature")
+    public static boolean partial_available_enabled = true;
+
+    @ConfField(mutable = true, comment = "Failure detection interval (seconds)")
+    public static int failure_detection_interval = 10;
+
+    @ConfField(mutable = true, comment = "Maximum temporary storage retention (hours)")
+    public static int temp_storage_max_retention = 24;
+
+    @ConfField(mutable = true, comment = "Auto merge on recovery")
+    public static boolean auto_merge_on_recovery = true;
+
+    @ConfField(mutable = true, comment = "The storage type for tablet failure records. Can be 'in_memory' or 'mysql'.")
+    public static String partial_availability_storage_type = "in_memory";
+
+    @ConfField(mutable = true, comment = "The JDBC URL for the MySQL database to store tablet failure records.")
+    public static String partial_availability_jdbc_url = "jdbc:mysql://127.0.0.1:3306/starrocks_failure_db";
+
+    @ConfField(mutable = true, comment = "The username for the MySQL database.")
+    public static String partial_availability_jdbc_user = "user";
+
+    @ConfField(mutable = true, comment = "The password for the MySQL database.")
+    public static String partial_availability_jdbc_password = "password";
 }

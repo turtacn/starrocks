@@ -1,41 +1,45 @@
 package com.starrocks.partial.cleanup;
 
+import com.starrocks.common.Config;
 import com.starrocks.metric.GaugeMetric;
 import com.starrocks.metric.LongCounterMetric;
 import com.starrocks.metric.Metric;
 import com.starrocks.metric.MetricRepo;
+import com.starrocks.partial.failure.TabletFailure;
 import com.starrocks.partial.failure.TabletFailureRepository;
+import com.starrocks.server.GlobalStateMgr;
+
+import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 public class TempTabletCleanupMonitor {
-    private static final GaugeMetric<Long> PENDING_CLEANUP_COUNT =
-            new GaugeMetric<Long>("temp_tablet_pending_cleanup", Metric.MetricUnit.NOUNIT, "Number of temp tablets pending cleanup") {
-                @Override
-                public Long getValue() {
-                    // This is a placeholder. The actual value should be updated periodically.
-                    return 0L;
-                }
-            };
-
-    private static final LongCounterMetric CLEANUP_SUCCESS_COUNT =
-            new LongCounterMetric("temp_tablet_cleanup_success", Metric.MetricUnit.REQUESTS, "Number of successfully cleaned temp tablets");
-
-    private static final LongCounterMetric CLEANUP_FAILURE_COUNT =
-            new LongCounterMetric("temp_tablet_cleanup_failure", Metric.MetricUnit.REQUESTS, "Number of failed temp tablet cleanups");
-
     private final TabletFailureRepository failureRepo;
+    private final TempTabletCleaner cleaner;
+    private final ScheduledExecutorService cleanupExecutor;
 
-    public TempTabletCleanupMonitor(TabletFailureRepository failureRepo) {
+    public TempTabletCleanupMonitor(TabletFailureRepository failureRepo, TempTabletCleaner cleaner) {
         this.failureRepo = failureRepo;
+        this.cleaner = cleaner;
+        this.cleanupExecutor = Executors.newSingleThreadScheduledExecutor();
     }
 
-    public void register() {
-        MetricRepo.addMetric(PENDING_CLEANUP_COUNT);
-        MetricRepo.addMetric(CLEANUP_SUCCESS_COUNT);
-        MetricRepo.addMetric(CLEANUP_FAILURE_COUNT);
+    public void start() {
+        cleanupExecutor.scheduleWithFixedDelay(this::cleanupExpiredTempTablets, 1, 1, TimeUnit.HOURS);
     }
 
-    public void updateMetrics() {
-        // In a real implementation, this would be called to update the gauge.
-        // For now, this is a placeholder.
+    private void cleanupExpiredTempTablets() {
+        long retentionMillis = TimeUnit.HOURS.toMillis(Config.temp_storage_max_retention);
+        long cutoffTime = System.currentTimeMillis() - retentionMillis;
+        List<TabletFailure> expiredFailures = failureRepo.getCompletedMergeTablets(cutoffTime);
+
+        for (TabletFailure failure : expiredFailures) {
+            try {
+                cleaner.cleanup(failure);
+            } catch (Exception e) {
+                // Log and continue
+            }
+        }
     }
 }
