@@ -2050,6 +2050,17 @@ public class FrontendServiceImpl implements FrontendService.Iface {
                                      OlapTable olapTable, ComputeResource computeResource) throws StarRocksException {
         final WarehouseManager warehouseManager = GlobalStateMgr.getCurrentState().getWarehouseMgr();
         int quorum = olapTable.getPartitionInfo().getQuorumNum(physicalPartition.getParentId(), olapTable.writeQuorum());
+
+         // 检查是否启用部分可用模式
+        if (Config.partial_available_enabled) {
+            // 获取该表的故障Tablet
+            List<Long> failedTablets = FailureDetector.getInstance().getFailedTabletsByTable(olapTable.getId());
+            if (!failedTablets.isEmpty()) {
+                LOG.warn("Table {} has {} failed tablets, query will be filtered",
+                        olapTable.getName(), failedTablets.size());
+            }
+        }
+
         for (MaterializedIndex index : physicalPartition.getMaterializedIndices(
                 MaterializedIndex.IndexExtState.ALL)) {
             if (olapTable.isCloudNativeTable()) {
@@ -2067,6 +2078,15 @@ public class FrontendServiceImpl implements FrontendService.Iface {
                 for (Tablet tablet : index.getTablets()) {
                     // we should ensure the replica backend is alive
                     // otherwise, there will be a 'unknown node id, id=xxx' error for stream load
+
+                    // 检查Tablet是否故障，如果是则跳过
+                    if (Config.partial_available_enabled &&
+                        FailureDetector.getInstance().isTabletFailed(tablet.getId())) {
+                        LOG.info("Skipping failed tablet {}", tablet.getId());
+                        continue;
+                    }
+
+                    // 原有逻辑...
                     LocalTablet localTablet = (LocalTablet) tablet;
                     Multimap<Replica, Long> bePathsMap =
                             localTablet.getNormalReplicaBackendPathMap(
