@@ -117,3 +117,82 @@ The tests will use mock objects for test data, such as `MockQueryPlan` and `Mock
 -   The tests in `PartialAvailabilityTestFramework` are currently designed to run with mock objects. Once the build environment is stable, these tests should be adapted to run as true integration tests against a real, running StarRocks cluster.
 -   The `MVCCDataMerger` needs to be fully implemented. Once it is, new tests will be required to verify the correctness of the data merging logic, including version handling and conflict resolution.
 -   Performance and stress tests should be developed to evaluate the feature's impact on the system under load.
+
+## 8. Test Execution Scripts
+
+The following scripts demonstrate how to run the automated tests. Note that these commands cannot be executed until the build environment issues are resolved.
+
+### 8.1. Running Mocked Integration Tests
+
+This command runs the specific test framework class which uses the mock components.
+
+```bash
+# Navigate to the fe directory
+cd fe/
+
+# Run the test framework using Maven
+# The MockBuildEnvironment properties can be used to bypass certain build checks
+mvn test -Dtest=PartialAvailabilityTestFramework \
+    -Dskip.fe.grammar.check=true \
+    -Dmock.dependencies=true
+```
+
+### 8.2. Running All Partial Availability Unit Tests
+
+This command would run all tests within the `com.starrocks.partial` package.
+
+```bash
+# Navigate to the fe directory
+cd fe/
+
+# Run all unit tests for the partial availability feature
+mvn test -Dtest="com.starrocks.partial.**.*Test"
+```
+
+## 9. Manual End-to-End Test Steps
+
+The following steps outline a manual test case for a real, working StarRocks cluster.
+
+### 9.1. Prerequisites
+-   A running StarRocks cluster (1 FE, 3 BEs recommended).
+-   A running MySQL server accessible from the FE node.
+-   The `partial_availability` feature is enabled in `fe.conf`, with `partial_availability_storage_type = mysql` and correct JDBC credentials.
+
+### 9.2. Test Steps
+
+1.  **Setup:**
+    *   Connect to the StarRocks cluster via the MySQL client.
+    *   Create a new database: `CREATE DATABASE partial_test;`
+    *   Use the new database: `USE partial_test;`
+    *   Create a single-replica table: `CREATE TABLE users (id INT, name STRING) ENGINE=OLAP DUPLICATE KEY(id) DISTRIBUTED BY HASH(id) BUCKETS 3 PROPERTIES ('replication_num' = '1');`
+    *   Insert some initial data: `INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob');`
+    *   Verify the data: `SELECT * FROM users ORDER BY id;` (Should return 2 rows).
+
+2.  **Simulate BE Failure:**
+    *   Identify which BE node holds the tablet for one of the rows (e.g., for `id = 1`). This can be done via `SHOW TABLETS FROM users;`.
+    *   Log into the machine for that BE node and stop the BE process (e.g., `./be/bin/stop_be.sh`).
+    *   Wait for the `FailureDetector` to run (default interval is 10 seconds).
+
+3.  **Verify Write Path:**
+    *   Attempt to insert data that would go to the failed BE: `INSERT INTO users VALUES (3, 'Charlie');` (Assuming `HASH(3)` maps to the failed BE).
+    *   **Expected Result:** The `INSERT` statement should succeed without errors.
+    *   Connect to the MySQL server and check the `tablet_failures` table. Verify that a record exists for the failed tablet.
+
+4.  **Verify Query Path:**
+    *   Run a query on the table: `SELECT * FROM users ORDER BY id;`
+    *   **Expected Result:** The query should succeed. It should return the rows from the healthy replicas (e.g., `(2, 'Bob')`) but not the rows from the failed replica. The data inserted during the failure (`Charlie`) will not be visible yet.
+
+5.  **Simulate BE Recovery:**
+    *   On the failed BE's machine, restart the BE process: `./be/bin/start_be.sh`.
+    *   Wait for the BE to register with the FE and for its tablets to be marked as `RECOVERING`.
+
+6.  **Verify Data Merge:**
+    *   The `DataMerger` daemon should automatically detect the `RECOVERING` tablet and trigger the merge process.
+    *   Monitor the `fe.log` for messages indicating the start and completion of the data merge.
+    *   **Expected Result:** The logs should show a successful merge.
+
+7.  **Final Verification:**
+    *   After the merge is complete, query the table again: `SELECT * FROM users ORDER BY id;`
+    *   **Expected Result:** The query should now return all data, including the data that was written during the failure (`(1, 'Alice'), (2, 'Bob'), (3, 'Charlie')`).
+    *   Check the MySQL `tablet_failures` table again. The status for the recovered tablet should be updated to `RECOVERED`.
+    *   Verify that any temporary tablets or partitions created during the failure have been cleaned up.
